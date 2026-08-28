@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 #                    CONFIGURATION
 # ============================================================
 
-BOT_TOKEN = "8846019153:AAE2gxzBCvxVnI6ziwMZqWuCwQfdjAU5QNc"
+BOT_TOKEN = "Token"
 DEVELOPER_ID = "Mr Fixer"
 
 # Global variables
