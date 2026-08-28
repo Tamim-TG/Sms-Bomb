@@ -1,3 +1,4 @@
+import os
 import requests
 import time
 import logging
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 #                    CONFIGURATION
 # ============================================================
 
-BOT_TOKEN = "Token"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 DEVELOPER_ID = "Mr Fixer"
 
 # Global variables
