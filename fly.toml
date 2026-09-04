@@ -1,10 +1,10 @@
-# fly.toml app configuration file generated for sms-bomb on 2026-08-28T19:27:43Z
+# fly.toml app configuration file generated for sms-bomb on 2026-09-04T05:31:35Z
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
 app = 'sms-bomb'
-primary_region = 'sin'
+primary_region = 'ams'
 
 [build]
   builder = 'paketobuildpacks/builder:base'
